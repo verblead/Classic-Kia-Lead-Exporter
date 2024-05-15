@@ -47,7 +47,7 @@ def fetch_ghl_leads():
         return []  # Return empty list on error
 
 def generate_adf_xml(leads_data):
-    """Generates ADF XML from lead data."""
+    """Generates ADF XML in VinSolutions format from GHL lead data."""
     if not leads_data:
         logging.warning("No leads found in the API response.")
         return None
@@ -55,34 +55,62 @@ def generate_adf_xml(leads_data):
     root = etree.Element("adf")
     for lead in leads_data:
         prospect = etree.SubElement(root, "prospect")
-        etree.SubElement(prospect, "id").text = str(lead.get("id", ""))
 
+        # ID and Source 
+        # (This assumes you have a source value in GHL)
+        source = lead.get("Contact Source", "")
+        etree.SubElement(prospect, "id", sequence="uniqueLeadId", source=source).text = str(lead.get("id", ""))
+
+        # Request Date (Formatted for VinSolutions)
+        # Adjust this if your GHL date format is different
+        request_date = lead.get("createdAt", "")[:19]  # Get timestamp and trim to YYYY-MM-DDTHH:MM:SS
+        etree.SubElement(prospect, "requestdate").text = request_date
+
+        # Vehicle Information
+        # (You'll need to map your GHL vehicle fields to VinSolutions format)
+        vehicle_info = lead.get("Additional Info", {})  # Assuming vehicle data is in Additional Info
+        vehicle = etree.SubElement(prospect, "vehicle", interest="buy", status="used")
+        etree.SubElement(vehicle, "vin").text = vehicle_info.get("Vehicle Vin", "")  # Assuming you have a VIN field in GHL
+        for key in ["Vehicle Year", "Vehicle Make", "Vehicle Model"]:  
+            value = vehicle_info.get(key, "")
+            if value:
+                etree.SubElement(vehicle, key.split(" ")[1].lower()).text = str(value)  # Convert to lowercase (year, make, model)
+        etree.SubElement(vehicle, "stock").text = ""  # Placeholder for stock number (if available)
+
+        # Customer Information
         customer = etree.SubElement(prospect, "customer")
         contact = etree.SubElement(customer, "contact")
-
-        # Customer Information (Handle Missing Names Gracefully)
-        first_name = lead.get("firstName")
-        last_name = lead.get("lastName")
-
-        if first_name:
-            etree.SubElement(contact, "name", part="first").text = first_name
-        if last_name:
-            etree.SubElement(contact, "name", part="last").text = last_name
-
-        # Contact Information (Optional)
-        for key in ["phone", "email", "address1", "city", "state", "postalCode"]:
+        for key in ["firstName", "lastName", "email"]:
             value = lead.get(key, "")
             if value:
-                etree.SubElement(contact, key).text = value
+                etree.SubElement(contact, "name" if key != "email" else key, 
+                                part="first" if key == "firstName" else "last" if key == "lastName" else "",
+                                type="individual").text = value
 
-        # Vehicle Information (Enhanced)
-        vehicle_info = lead.get("vehicleOfInterest", {})
-        if vehicle_info:
-            vehicle = etree.SubElement(prospect, "vehicle", interest="buy")
-            for key in ["year", "make", "model"]:
-                value = vehicle_info.get(key, "")
-                if value:
-                    etree.SubElement(vehicle, key).text = value    
+        # Phone Numbers (Multiple)
+        phone_types = {"homePhone": "home", "cellPhone": "mobile", "workPhone": "work"}  
+        for ghl_key, adf_type in phone_types.items():
+            value = lead.get(ghl_key, "")
+            if value:
+                etree.SubElement(contact, "phone", type=adf_type).text = value
+
+        # Comments (From AI Memory)
+        comments = lead.get("AI Memory", "")  
+        if comments:
+            etree.SubElement(customer, "comments").text = comments
+
+        # Vendor Information (Replace with your actual dealership information)
+        vendor = etree.SubElement(prospect, "vendor")
+        etree.SubElement(vendor, "vendorname").text = "Your Dealership Name"
+        vendor_contact = etree.SubElement(vendor, "contact")
+        etree.SubElement(vendor_contact, "name", part="full").text = "Your Dealership Name"
+        etree.SubElement(vendor_contact, "email").text = "your_dealership_email@example.com"
+        etree.SubElement(vendor_contact, "phone", type="business").text = "Your Dealership Phone"
+
+        # Provider Information (Replace with VinSolutions information)
+        provider = etree.SubElement(prospect, "provider")
+        etree.SubElement(provider, "name", part="full").text = "VinSolutions"  # Or the actual lead provider name
+        etree.SubElement(provider, "service").text = "VinSolutions Lead Service" # Or the actual service name
 
         # ID with Source
         source = "VERBLEAD"  # Hardcoded as VERBLEAD per your requirement
@@ -114,8 +142,8 @@ def generate_adf_xml(leads_data):
         for tag in tags:
             etree.SubElement(prospect, "tag").text = tag
 
-
     return etree.tostring(root, pretty_print=True, encoding="utf-8", xml_declaration=True)
+
 
 # Email Sending Function (Refactored)
 def send_email(recipient, subject, contents, attachment=None):
